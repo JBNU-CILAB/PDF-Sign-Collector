@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDF 서명</title>
+<link rel="stylesheet" href="/style.css?v=2">
+</head>
+<body>
+<header>
+  <h1>PDF 서명</h1>
+  <a class="btn" id="listBtn" href="/" hidden>문서 목록</a>
+  <label class="btn primary">PDF 열기
+    <input type="file" id="pdfInput" accept="application/pdf,.pdf" hidden>
+  </label>
+  <label class="btn" id="replaceBtn" hidden title="공유 링크는 그대로 두고 PDF 파일만 바꿉니다 (서버 컴퓨터에서만)">문서 교체
+    <input type="file" id="replaceInput" accept="application/pdf,.pdf" hidden>
+  </label>
+  <label class="btn">서명 이미지 불러오기
+    <input type="file" id="sigInput" accept="image/*" multiple hidden>
+  </label>
+  <button id="drawBtn" class="btn" title="마우스·펜·손가락으로 직접 서명">서명 그리기</button>
+  <input id="signerName" placeholder="내 이름 (기록용)" maxlength="50">
+  <span class="spacer"></span>
+  <span id="zoomBar" class="zoom">
+    <button id="zoomOut" class="btn small" title="축소 (Ctrl+휠)">－</button>
+    <span id="zoomVal">100%</span>
+    <button id="zoomIn" class="btn small" title="확대 (Ctrl+휠)">＋</button>
+    <button id="zoomFit" class="btn small" title="화면 폭에 맞춤">맞춤</button>
+  </span>
+  <button id="saveBtn" class="btn primary" disabled>서명 적용·저장</button>
+  <button id="downloadBtn" class="btn" disabled>PDF 다운로드</button>
+</header>
+
+<div id="shareBar" hidden>
+  공유 링크: <input id="shareLink" readonly>
+  <button id="copyBtn" class="btn small">복사</button>
+  <span id="docInfo"></span>
+</div>
+<div id="banner" hidden></div>
+
+<div id="layout">
+  <aside>
+    <section>
+      <h2>내 서명</h2>
+      <label class="chk"><input type="checkbox" id="removeBg" checked> 흰 배경 투명하게</label>
+      <div id="sigList"><p class="muted">서명 사진을 불러오거나 "서명 그리기"로 직접 그리세요.</p></div>
+      <p class="muted small">서명을 클릭한 뒤 문서의 원하는 위치를 클릭하면 붙습니다.</p>
+    </section>
+    <section id="selPanel" hidden>
+      <h2>선택한 서명</h2>
+      <label>크기 <input type="range" id="sizeRange" min="2" max="100" step="0.5"> <span id="sizeVal"></span></label>
+      <label class="chk"><input type="checkbox" id="keepRatio" checked> 비율 유지</label>
+      <button id="delBtn" class="btn small danger">삭제 (Del)</button>
+      <p class="muted small">드래그로 이동, 오른쪽 아래 모서리로 크기 조절.</p>
+    </section>
+    <section>
+      <h2>기록</h2>
+      <ol id="history" class="small"></ol>
+    </section>
+  </aside>
+  <main id="viewer">
+    <div id="empty">
+      <p>PDF 파일을 열거나 여기로 끌어다 놓으세요.</p>
+      <p class="muted small">문서를 열면 공유 링크가 생성됩니다. 링크를 받은 사람은 각자 서명을 붙여 저장할 수 있고,<br>
+      모든 서명은 같은 문서에 차례대로 누적됩니다.</p>
+      <div id="docList" hidden></div>
+    </div>
+    <div id="pages"></div>
+  </main>
+</div>
+
+<div id="padModal" hidden>
+  <div class="padBox" role="dialog" aria-label="서명 그리기">
+    <h2>서명 그리기</h2>
+    <canvas id="pad"></canvas>
+    <div class="padTools">
+      <span class="inks">
+        <button class="ink sel" data-color="#111111" title="검정" style="--c:#111111"></button>
+        <button class="ink" data-color="#1d3fbb" title="파랑" style="--c:#1d3fbb"></button>
+      </span>
+      <label>굵기 <input type="range" id="padSize" min="1" max="12" step="0.5" value="4"></label>
+      <button id="padUndo" class="btn small">되돌리기</button>
+      <button id="padClear" class="btn small">모두 지우기</button>
+      <span class="spacer"></span>
+      <button id="padCancel" class="btn">취소</button>
+      <button id="padOk" class="btn primary" disabled>완료</button>
+    </div>
+    <p class="muted small">마우스, 펜, 손가락으로 서명하세요. 펜은 누르는 힘에 따라 굵기가 달라집니다. 완료하면 "내 서명"에 저장되고, 문서를 클릭해 붙일 수 있습니다.</p>
+  </div>
+</div>
+
+<script>
+// 오류를 화면 배너와 서버 기록(/api/clientlog)에 남김 – 라이브러리 로드 실패도 잡도록 맨 앞에 둠
+(function () {
+  function report(msg) {
+    try { var b = document.getElementById('banner'); b.textContent = '오류: ' + msg; b.className = 'err'; b.hidden = false; } catch (e) {}
+    try { navigator.sendBeacon('/api/clientlog', navigator.userAgent + ' :: ' + location.pathname + ' :: ' + msg); } catch (e) {}
+  }
+  window.reportError = report;
+  window.addEventListener('error', function (e) {
+    var t = e.target;
+    if (t && t !== window && (t.src || t.href)) report('파일을 불러오지 못함: ' + (t.src || t.href));
+    else report((e.message || '') + ' @' + (e.filename || '') + ':' + (e.lineno || ''));
+  }, true);
+  window.addEventListener('unhandledrejection', function (e) { report('' + (e.reason && (e.reason.stack || e.reason.message) || e.reason)); });
+})();
+</script>
+<script src="/vendor/pdf.min.js"></script>
+<script src="/vendor/pdf-lib.min.js"></script>
+<script src="/app.js?v=2"></script>
+</body>
+</html>
