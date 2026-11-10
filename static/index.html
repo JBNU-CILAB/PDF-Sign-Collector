@@ -94,16 +94,36 @@
 // 오류를 화면 배너와 서버 기록(/api/clientlog)에 남김 – 라이브러리 로드 실패도 잡도록 맨 앞에 둠
 (function () {
   function report(msg) {
-    try { var b = document.getElementById('banner'); b.textContent = '오류: ' + msg; b.className = 'err'; b.hidden = false; } catch (e) {}
-    try { navigator.sendBeacon('/api/clientlog', navigator.userAgent + ' :: ' + location.pathname + ' :: ' + msg); } catch (e) {}
+    // 화면 배너에 표시
+    try {
+      var b = document.getElementById('banner');
+      b.textContent = '오류: ' + msg;
+      b.className = 'err';
+      b.hidden = false;
+    } catch (e) {}
+
+    // 서버 기록에 남김
+    try {
+      navigator.sendBeacon('/api/clientlog', navigator.userAgent + ' :: ' + location.pathname + ' :: ' + msg);
+    } catch (e) {}
   }
+
   window.reportError = report;
+
+  // 스크립트 오류, 그리고 (캡처 단계에서) <script>/<link> 파일 로드 실패
   window.addEventListener('error', function (e) {
     var t = e.target;
-    if (t && t !== window && (t.src || t.href)) report('파일을 불러오지 못함: ' + (t.src || t.href));
-    else report((e.message || '') + ' @' + (e.filename || '') + ':' + (e.lineno || ''));
+    if (t && t !== window && (t.src || t.href)) {
+      report('파일을 불러오지 못함: ' + (t.src || t.href));
+    } else {
+      report((e.message || '') + ' @' + (e.filename || '') + ':' + (e.lineno || ''));
+    }
   }, true);
-  window.addEventListener('unhandledrejection', function (e) { report('' + (e.reason && (e.reason.stack || e.reason.message) || e.reason)); });
+
+  // 처리되지 않은 Promise 오류 (async 함수 안의 예외 등)
+  window.addEventListener('unhandledrejection', function (e) {
+    report('' + (e.reason && (e.reason.stack || e.reason.message) || e.reason));
+  });
 })();
 </script>
 <script src="/vendor/pdf.min.js"></script>

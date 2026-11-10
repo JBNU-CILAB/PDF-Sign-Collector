@@ -53,8 +53,10 @@ def load_meta(doc_id):
 def save_meta(doc_id, meta):
     p = os.path.join(doc_dir(doc_id), "meta.json")
     tmp = p + ".tmp"
+
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=1)
+
     os.replace(tmp, p)
 
 
@@ -63,10 +65,12 @@ def list_docs():
     for doc_id in os.listdir(DATA):
         if not ID_RE.match(doc_id) or not os.path.isfile(os.path.join(doc_dir(doc_id), "meta.json")):
             continue
+
         try:
             m = load_meta(doc_id)
         except (OSError, ValueError):
             continue
+
         h = m["history"]
         # 마지막 문서 교체 이후의 서명만 현재 파일에 들어 있음
         start = max((i for i, e in enumerate(h) if e["action"].startswith("문서 교체")), default=0)
@@ -74,6 +78,7 @@ def list_docs():
         docs.append({"id": doc_id, "name": m["name"], "version": m["version"],
                      "created": h[0]["at"], "updated": h[-1]["at"],
                      "signers": [e["by"] for e in signs]})
+
     docs.sort(key=lambda d: d["updated"], reverse=True)
     return docs
 
@@ -92,6 +97,7 @@ class Handler(SimpleHTTPRequestHandler):
         # 정적 파일(html/css/js)은 매번 변경 여부 확인 → 업데이트 후 옛 파일이 캐시에 남지 않게
         if not self.path.startswith("/api/"):
             self.send_header("Cache-Control", "no-cache")
+
         super().end_headers()
 
     # ---------- helpers ----------
@@ -109,10 +115,12 @@ class Handler(SimpleHTTPRequestHandler):
         if n <= 0 or n > MAX_BYTES:
             self.send_json({"error": f"파일 크기 오류 (최대 {MAX_BYTES // 2**20}MB)"}, 413)
             return None
+
         data = self.rfile.read(n)
         if not data.startswith(b"%PDF"):
             self.send_json({"error": "PDF 파일이 아닙니다"}, 400)
             return None
+
         return data
 
     def is_local(self):
@@ -124,10 +132,12 @@ class Handler(SimpleHTTPRequestHandler):
         m = re.match(r"^/api/docs(?:/([^/]+))?(/pdf)?/?$", path)
         if not m:
             return None
+
         doc_id, is_pdf = m.group(1), bool(m.group(2))
         if doc_id is not None and (not ID_RE.match(doc_id) or not os.path.isdir(doc_dir(doc_id))):
             self.send_json({"error": "문서를 찾을 수 없습니다"}, 404)
             return False
+
         return doc_id, is_pdf
 
     def log_message(self, fmt, *args):
@@ -141,28 +151,35 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json({"publicUrl": PUBLIC_URL,
                                    "canUpload": ALLOW_REMOTE_UPLOAD or self.is_local(),
                                    "canManage": self.is_local()})
+
         r = self.route()
         if r is None:
             if urlparse(self.path).path.startswith("/d/"):
                 self.path = "/index.html"  # 공유 링크 /d/<id> -> SPA
             return super().do_GET()
+
         if r is False:
             return
+
         doc_id, is_pdf = r
         if doc_id is None:
             # 목록은 모든 문서 ID(=접근 권한)를 드러내므로 서버 컴퓨터에서만
             if not self.is_local():
                 return self.send_json({"error": "문서 목록은 서버 컴퓨터에서만 볼 수 있습니다"}, 403)
             return self.send_json(list_docs())
+
         meta = load_meta(doc_id)
         if not is_pdf:
             return self.send_json(meta)
+
         q = parse_qs(urlparse(self.path).query)
         v = int(q.get("v", [meta["version"]])[0])
         if not 1 <= v <= meta["version"]:
             return self.send_json({"error": "버전 없음"}, 404)
+
         with open(os.path.join(doc_dir(doc_id), f"v{v}.pdf"), "rb") as f:
             data = f.read()
+
         self.send_response(200)
         self.send_header("Content-Type", "application/pdf")
         self.send_header("Content-Length", str(len(data)))
@@ -180,14 +197,17 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_response(204)
             self.end_headers()
             return
+
         r = self.route()
         if not r or r[0] is not None or r[1]:
             return self.send_json({"error": "잘못된 요청"}, 404) if r is not False else None
         if not (ALLOW_REMOTE_UPLOAD or self.is_local()):
             return self.send_json({"error": "새 문서 업로드는 서버 컴퓨터에서만 할 수 있습니다"}, 403)
+
         data = self.read_pdf_body()
         if data is None:
             return
+
         name = unquote(self.headers.get("X-Filename") or "document.pdf")[:200]
         doc_id = secrets.token_urlsafe(9)
         with LOCK:
@@ -197,23 +217,28 @@ class Handler(SimpleHTTPRequestHandler):
             meta = {"id": doc_id, "name": name, "version": 1,
                     "history": [{"version": 1, "action": "업로드", "by": "", "at": time.time()}]}
             save_meta(doc_id, meta)
+
         self.send_json(meta, 201)
 
     def do_PUT(self):
         r = self.route()
         if not r or r[0] is None or not r[1]:
             return self.send_json({"error": "잘못된 요청"}, 404) if r is not False else None
+
         doc_id = r[0]
         replace = self.headers.get("X-Replace") == "1"
         if replace and not (ALLOW_REMOTE_UPLOAD or self.is_local()):
             return self.send_json({"error": "문서 교체는 서버 컴퓨터에서만 할 수 있습니다"}, 403)
+
         data = self.read_pdf_body()
         if data is None:
             return
+
         try:
             base = int(self.headers.get("X-Base-Version") or 0)
         except ValueError:
             base = 0
+
         signer = unquote(self.headers.get("X-Signer") or "")[:100]
         count = self.headers.get("X-Sign-Count") or "?"
         with LOCK:
@@ -221,18 +246,22 @@ class Handler(SimpleHTTPRequestHandler):
             if not replace and base != meta["version"]:
                 return self.send_json({"error": "다른 사용자가 먼저 저장했습니다",
                                        "version": meta["version"]}, 409)
+
             v = meta["version"] + 1
             with open(os.path.join(doc_dir(doc_id), f"v{v}.pdf"), "wb") as f:
                 f.write(data)
+
             meta["version"] = v
             if replace:  # 이전 버전 파일은 그대로 보존 (?v=N 으로 받을 수 있음)
                 meta["name"] = unquote(self.headers.get("X-Filename") or meta["name"])[:200]
                 action = f"문서 교체 ({meta['name']})"
             else:
                 action = f"서명 {count}개 추가"
+
             meta["history"].append({"version": v, "action": action,
                                     "by": signer, "at": time.time()})
             save_meta(doc_id, meta)
+
         self.send_json(meta)
 
 
@@ -245,11 +274,13 @@ def lan_ips():
         s.close()
     except OSError:
         pass
+
     return sorted(ips)
 
 
 def main():
     global DATA, PUBLIC_URL, ALLOW_REMOTE_UPLOAD, LOG_ALL
+
     ap = argparse.ArgumentParser(description="PDF 서명 공유 서버")
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=8000)
@@ -259,21 +290,28 @@ def main():
     ap.add_argument("--allow-remote-upload", action="store_true",
                     help="다른 컴퓨터에서도 새 문서 업로드 허용")
     ap.add_argument("--log-all", action="store_true", help="모든 요청 기록 (접속 문제 진단용)")
+
     a = ap.parse_args()
+
     DATA = os.path.abspath(a.data)
     ALLOW_REMOTE_UPLOAD = a.allow_remote_upload
     LOG_ALL = a.log_all
+
     os.makedirs(DATA, exist_ok=True)
     ips = lan_ips()
     PUBLIC_URL = (a.public_url or (f"http://{ips[0]}:{a.port}" if ips else "")).rstrip("/")
     srv = ThreadingHTTPServer((a.host, a.port), Handler)
+
     print(f"PDF 서명 서버 실행 중 (데이터: {DATA})")
     print(f"  이 컴퓨터(문서 올리기): http://localhost:{a.port}/")
+
     for ip in ips:
         print(f"  같은 네트워크:          http://{ip}:{a.port}/")
+
     print(f"  공유 링크 주소:         {PUBLIC_URL or '(알 수 없음, --public-url 지정)'}")
     if not ALLOW_REMOTE_UPLOAD:
         print("  새 문서 업로드는 이 컴퓨터에서만 가능 (--allow-remote-upload 로 해제)")
+
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
